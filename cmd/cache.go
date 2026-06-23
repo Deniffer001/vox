@@ -11,7 +11,7 @@ import (
 
 type CacheCmd struct {
 	Status CacheStatusCmd `cmd:"" default:"withargs" help:"Show cache size and file count"`
-	Clear  CacheClearCmd  `cmd:"" help:"Delete all cached audio"`
+	Clear  CacheClearCmd  `cmd:"" help:"Delete all cached transcriptions"`
 }
 
 type CacheStatusCmd struct{}

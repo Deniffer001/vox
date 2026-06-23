@@ -14,12 +14,21 @@ import (
 	"github.com/ontypehq/vox/internal/ui"
 )
 
-const asrSampleRate = 16000
+const (
+	asrSampleRate = 16000
+	// syncInlineLimit: files up to this size take the fast synchronous
+	// qwen3-asr-flash path (audio base64-inlined, <=5 min). Larger files are
+	// uploaded and transcribed asynchronously via qwen3-asr-flash-filetrans.
+	syncInlineLimit = 10 * 1024 * 1024 // 10 MB
+)
 
 type HearCmd struct {
-	File     string `short:"f" help:"Transcribe an existing audio file instead of recording"`
-	Duration int    `short:"d" default:"5" help:"Recording duration in seconds"`
-	Context  string `short:"c" help:"Text context to improve recognition (e.g. domain terms)"`
+	File     string `short:"f" help:"Transcribe an audio file (auto-uploads to filetrans if large)"`
+	URL      string `short:"u" help:"Transcribe a public audio URL via async filetrans"`
+	Duration int    `short:"d" default:"5" help:"Mic recording duration in seconds"`
+	Context  string `short:"c" help:"Text context to improve recognition (sync path only)"`
+	ITN      bool   `default:"true" negatable:"" help:"Inverse text normalization: spoken numbers -> digits (--no-itn to disable)"`
+	Long     bool   `help:"Force the async filetrans path even for small files"`
 	NoCache  bool   `help:"Skip transcription cache"`
 }
 
@@ -28,73 +37,97 @@ func (c *HearCmd) Run(cfg *config.AppConfig) error {
 	if err != nil {
 		return err
 	}
+	client := dashscope.NewClient(apiKey)
 
-	var wavData []byte
-	var cacheKey string
+	switch {
+	case c.URL != "":
+		ui.Info("%s %s", ui.Dim("url"), ui.Key(c.URL))
+		return c.transcribeCached(cfg, "url:"+c.URL+":"+c.Context, func() (*dashscope.ASRResult, error) {
+			ui.Info("%s %s", ui.Dim("model"), ui.Key(dashscope.ModelASRFiletrans))
+			return client.TranscribeURL(c.URL, c.ITN)
+		})
 
-	if c.File != "" {
-		wavData, err = os.ReadFile(c.File)
+	case c.File != "":
+		info, err := os.Stat(c.File)
 		if err != nil {
 			return fmt.Errorf("read file: %w", err)
 		}
-		ui.Info("%s %s", ui.Dim("file"), ui.Key(c.File))
+		ui.Info("%s %s %s", ui.Dim("file"), ui.Key(c.File), ui.Dim(formatSize(info.Size())))
 
-		// Cache key = hash of file content + context
-		h := sha256.New()
-		h.Write(wavData)
-		h.Write([]byte(":" + c.Context))
-		cacheKey = hex.EncodeToString(h.Sum(nil))
-
-		// Check cache
-		if !c.NoCache {
-			cachePath := filepath.Join(cfg.Dir, "cache", "asr-"+cacheKey+".txt")
-			if cached, err := os.ReadFile(cachePath); err == nil {
-				ui.Info("%s", ui.Dim("cached"))
-				fmt.Println(string(cached))
-				return nil
-			}
+		if c.Long || info.Size() > syncInlineLimit {
+			key := fmt.Sprintf("filetrans:%s:%d:%d:%s", c.File, info.Size(), info.ModTime().UnixNano(), c.Context)
+			return c.transcribeCached(cfg, key, func() (*dashscope.ASRResult, error) {
+				ui.Info("%s %s", ui.Dim("model"), ui.Key(dashscope.ModelASRFiletrans))
+				ui.Info("%s", ui.Dim("uploading…"))
+				return client.TranscribeLocalFile(c.File, c.ITN)
+			})
 		}
-	} else {
-		ui.Info("Recording for %ds... %s", c.Duration, ui.Dim("(speak now)"))
 
+		data, err := os.ReadFile(c.File)
+		if err != nil {
+			return fmt.Errorf("read file: %w", err)
+		}
+		h := sha256.New()
+		h.Write(data)
+		h.Write([]byte(":" + c.Context))
+		key := "file:" + hex.EncodeToString(h.Sum(nil))
+		return c.transcribeCached(cfg, key, func() (*dashscope.ASRResult, error) {
+			ui.Info("%s %s", ui.Dim("model"), ui.Key(dashscope.ModelASRFlash))
+			return client.Transcribe(data, c.Context, c.ITN)
+		})
+
+	default:
+		ui.Info("Recording for %ds... %s", c.Duration, ui.Dim("(speak now)"))
 		recorder, err := audio.NewRecorder(asrSampleRate, 1)
 		if err != nil {
 			return fmt.Errorf("init recorder: %w", err)
 		}
-
 		if err := recorder.Start(); err != nil {
 			return fmt.Errorf("start recording: %w", err)
 		}
 		time.Sleep(time.Duration(c.Duration) * time.Second)
 		pcm := recorder.Stop()
-
 		ui.Info("%s %s", ui.Dim("recorded"), ui.Dim(fmt.Sprintf("%d bytes", len(pcm))))
 
-		wavData = wrapPCMAsWAVWithRate(pcm, asrSampleRate)
+		wavData := wrapPCMAsWAVWithRate(pcm, asrSampleRate)
+		ui.Info("%s %s", ui.Dim("model"), ui.Key(dashscope.ModelASRFlash))
+
+		t0 := time.Now()
+		result, err := client.Transcribe(wavData, c.Context, c.ITN)
+		if err != nil {
+			return fmt.Errorf("transcribe: %w", err)
+		}
+		ui.Info("%s %s", ui.Dim("latency"), ui.Dim(time.Since(t0).Round(time.Millisecond).String()))
+		fmt.Println(result.Text)
+		return nil
+	}
+}
+
+// transcribeCached returns a cached transcript for cacheKey, or runs fn and
+// caches its result. The transcript is printed to stdout (pipe-friendly).
+func (c *HearCmd) transcribeCached(cfg *config.AppConfig, cacheKey string, fn func() (*dashscope.ASRResult, error)) error {
+	sum := sha256.Sum256([]byte(cacheKey))
+	cachePath := filepath.Join(cfg.Dir, "cache", "asr-"+hex.EncodeToString(sum[:])+".txt")
+
+	if !c.NoCache {
+		if cached, err := os.ReadFile(cachePath); err == nil {
+			ui.Info("%s", ui.Dim("cached"))
+			fmt.Println(string(cached))
+			return nil
+		}
 	}
 
-	// Transcribe
 	t0 := time.Now()
-	ui.Info("%s %s", ui.Dim("model"), ui.Key(dashscope.ModelASRFlash))
-
-	client := dashscope.NewClient(apiKey)
-	result, err := client.Transcribe(wavData, c.Context)
+	result, err := fn()
 	if err != nil {
 		return fmt.Errorf("transcribe: %w", err)
 	}
+	ui.Info("%s %s", ui.Dim("latency"), ui.Dim(time.Since(t0).Round(time.Millisecond).String()))
 
-	elapsed := time.Since(t0).Round(time.Millisecond)
-	ui.Info("%s %s", ui.Dim("latency"), ui.Dim(elapsed.String()))
-
-	// Cache the result for file-based transcription
-	if cacheKey != "" && !c.NoCache && result.Text != "" {
-		cachePath := filepath.Join(cfg.Dir, "cache", "asr-"+cacheKey+".txt")
+	if !c.NoCache && result.Text != "" {
 		os.WriteFile(cachePath, []byte(result.Text), 0644)
 	}
-
-	// Output transcription to stdout (so it can be piped)
 	fmt.Println(result.Text)
-
 	return nil
 }
 

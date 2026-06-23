@@ -6,7 +6,8 @@ import (
 )
 
 const (
-	ModelASRFlash    = "qwen3-asr-flash"
+	ModelASRFlash     = "qwen3-asr-flash"
+	ModelASRFiletrans = "qwen3-asr-flash-filetrans"
 	multimodalGenPath = "/services/aigc/multimodal-generation/generation"
 )
 
@@ -16,8 +17,9 @@ type ASRResult struct {
 }
 
 // Transcribe sends audio to Qwen3-ASR via the multimodal generation endpoint.
-// wavData should be WAV file bytes. context is optional text context for better recognition.
-func (c *Client) Transcribe(wavData []byte, context string) (*ASRResult, error) {
+// wavData should be WAV file bytes. context is optional text context for better
+// recognition. itn toggles inverse text normalization (spoken numbers -> digits).
+func (c *Client) Transcribe(wavData []byte, context string, itn bool) (*ASRResult, error) {
 	audioURI := "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavData)
 
 	systemText := ""
@@ -45,7 +47,7 @@ func (c *Client) Transcribe(wavData []byte, context string) (*ASRResult, error) 
 		},
 		"parameters": map[string]any{
 			"asr_options": map[string]any{
-				"enable_itn": true,
+				"enable_itn": itn,
 			},
 		},
 	}

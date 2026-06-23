@@ -13,35 +13,16 @@ type DashScopeConfig struct {
 	APIKey string `json:"api_key,omitempty"`
 }
 
-type SlackConfig struct {
-	BotToken string `json:"bot_token,omitempty"`
-	AppToken string `json:"app_token,omitempty"`
-}
-
 type Services struct {
 	DashScope DashScopeConfig `json:"dashscope,omitempty"`
-	Slack     SlackConfig     `json:"slack,omitempty"`
-}
-
-type ListenConfig struct {
-	Channels []string          `json:"channels,omitempty"`  // default channel names or IDs
-	Ignore   []string          `json:"ignore,omitempty"`    // Slack user IDs or display names to skip
-	VoiceMap map[string]string `json:"voice_map,omitempty"` // slack user ID or display name → voice
 }
 
 type Config struct {
-	Services Services     `json:"services"`
-	Listen   ListenConfig `json:"listen,omitempty"`
-}
-
-type State struct {
-	LastVoice string `json:"last_voice,omitempty"`
-	LastLang  string `json:"last_lang,omitempty"`
+	Services Services `json:"services"`
 }
 
 type AppConfig struct {
 	Config Config
-	State  State
 	Dir    string
 }
 
@@ -53,7 +34,6 @@ func Dir() string {
 func Load() (*AppConfig, error) {
 	dir := Dir()
 	os.MkdirAll(dir, 0755)
-	os.MkdirAll(filepath.Join(dir, "voices"), 0755)
 	os.MkdirAll(filepath.Join(dir, "cache"), 0755)
 
 	ac := &AppConfig{Dir: dir}
@@ -74,9 +54,6 @@ func Load() (*AppConfig, error) {
 			}
 		}
 	}
-	if data, err := os.ReadFile(filepath.Join(dir, "state.json")); err == nil {
-		json.Unmarshal(data, &ac.State)
-	}
 
 	return ac, nil
 }
@@ -85,24 +62,12 @@ func (ac *AppConfig) SaveConfig() error {
 	return writeJSON(filepath.Join(ac.Dir, "config.json"), ac.Config)
 }
 
-func (ac *AppConfig) SaveState() error {
-	return writeJSON(filepath.Join(ac.Dir, "state.json"), ac.State)
-}
-
 func (ac *AppConfig) RequireAPIKey() (string, error) {
 	key := ac.Config.Services.DashScope.APIKey
 	if key == "" {
 		return "", fmt.Errorf("not authenticated — run: vox auth login dashscope --token <key>")
 	}
 	return key, nil
-}
-
-func (ac *AppConfig) RequireSlack() (botToken, appToken string, err error) {
-	s := ac.Config.Services.Slack
-	if s.BotToken == "" || s.AppToken == "" {
-		return "", "", fmt.Errorf("slack not configured — run: vox auth login slack --bot-token <token> --app-token <token>")
-	}
-	return s.BotToken, s.AppToken, nil
 }
 
 func writeJSON(path string, v any) error {

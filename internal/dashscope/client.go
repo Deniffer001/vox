@@ -8,10 +8,7 @@ import (
 	"net/http"
 )
 
-const (
-	httpEndpoint   = "https://dashscope.aliyuncs.com/api/v1"
-	enrollmentPath = "/services/audio/tts/customization"
-)
+const httpEndpoint = "https://dashscope.aliyuncs.com/api/v1"
 
 // Client handles HTTP API calls to DashScope
 type Client struct {
@@ -24,85 +21,6 @@ func NewClient(apiKey string) *Client {
 		apiKey:     apiKey,
 		httpClient: &http.Client{},
 	}
-}
-
-// EnrollVoice creates a cloned voice from audio data
-func (c *Client) EnrollVoice(name string, audioBase64 string) (string, error) {
-	body := map[string]any{
-		"model": ModelEnrollment,
-		"input": map[string]any{
-			"action":       "create",
-			"target_model": ModelVCRealtime,
-			"preferred_name": name,
-			"audio": map[string]string{
-				"data": "data:audio/wav;base64," + audioBase64,
-			},
-		},
-	}
-
-	resp, err := c.post(enrollmentPath, body)
-	if err != nil {
-		return "", err
-	}
-
-	output, ok := resp["output"].(map[string]any)
-	if !ok {
-		return "", fmt.Errorf("unexpected response: %v", resp)
-	}
-	voiceID, ok := output["voice"].(string)
-	if !ok {
-		return "", fmt.Errorf("no voice in response: %v", output)
-	}
-	return voiceID, nil
-}
-
-// ListVoices returns all enrolled custom voices
-func (c *Client) ListVoices(page, pageSize int) ([]map[string]any, error) {
-	body := map[string]any{
-		"model": ModelEnrollment,
-		"input": map[string]any{
-			"action":     "list",
-			"page_size":  pageSize,
-			"page_index": page,
-		},
-	}
-
-	resp, err := c.post(enrollmentPath, body)
-	if err != nil {
-		return nil, err
-	}
-
-	output, ok := resp["output"].(map[string]any)
-	if !ok {
-		return nil, nil
-	}
-
-	voicesRaw, ok := output["voice_list"].([]any)
-	if !ok {
-		return nil, nil
-	}
-
-	var voices []map[string]any
-	for _, v := range voicesRaw {
-		if m, ok := v.(map[string]any); ok {
-			voices = append(voices, m)
-		}
-	}
-	return voices, nil
-}
-
-// DeleteVoice removes an enrolled voice
-func (c *Client) DeleteVoice(voiceID string) error {
-	body := map[string]any{
-		"model": ModelEnrollment,
-		"input": map[string]any{
-			"action": "delete",
-			"voice":  voiceID,
-		},
-	}
-
-	_, err := c.post(enrollmentPath, body)
-	return err
 }
 
 func (c *Client) post(path string, body any) (map[string]any, error) {

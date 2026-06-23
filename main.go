@@ -10,18 +10,15 @@ import (
 )
 
 var cli struct {
-	Auth   cmd.AuthCmd   `cmd:"" help:"Manage authentication"`
-	Say    cmd.SayCmd    `cmd:"" help:"Speak text with TTS"`
-	Hear   cmd.HearCmd   `cmd:"" help:"Transcribe speech to text"`
-	Listen cmd.ListenCmd `cmd:"" help:"Listen to Slack and speak messages aloud"`
-	Voice  cmd.VoiceCmd  `cmd:"" help:"Manage voice profiles"`
-	Cache  cmd.CacheCmd  `cmd:"" help:"Manage audio cache"`
+	Auth  cmd.AuthCmd  `cmd:"" help:"Manage authentication"`
+	Hear  cmd.HearCmd  `cmd:"" help:"Transcribe speech to text"`
+	Cache cmd.CacheCmd `cmd:"" help:"Manage transcription cache"`
 }
 
 func main() {
 	ctx := kong.Parse(&cli,
 		kong.Name("vox"),
-		kong.Description("Voice clone TTS — powered by Qwen3-TTS"),
+		kong.Description("Speech-to-text CLI — powered by Qwen3-ASR via DashScope"),
 		kong.UsageOnError(),
 	)
 
