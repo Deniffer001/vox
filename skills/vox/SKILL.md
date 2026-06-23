@@ -1,117 +1,65 @@
 ---
 name: vox
-description: Voice I/O — speak text aloud with TTS voice cloning, or transcribe speech to text with ASR.
+description: Transcribe speech to text from a local audio file, a public URL, or the microphone, via Qwen3-ASR on DashScope. Handles short clips and multi-hour files.
 ---
 
 # vox
 
-Voice I/O through the terminal. TTS with ~500ms latency, ASR with ~1.5s latency. Powered by Qwen3-TTS and Qwen3-ASR via DashScope API. Supports system voices and user-cloned voices.
+Speech-to-text in the terminal. Qwen3-ASR via DashScope. Transcribes a local audio file, a public URL, or a short microphone recording; outputs plain text to stdout (pipe-friendly). Short clips use the fast sync model; long files auto-route to the async filetrans model (no object-storage setup needed).
 
 ## When to Use
 
-- User asks you to **read something aloud**, narrate, or speak
-- User says "say this", "read this to me", "speak", "announce"
-- User wants to **preview how text sounds** in a specific voice
-- User wants to **test their cloned voice** with new text
-- User wants to **transcribe audio** to text
-- User says "listen to this", "what does this say", "transcribe this"
+- User wants to **transcribe audio** to text — a file, a URL, or a recording
+- User says "transcribe this", "what does this audio say", "speech to text"
+- User has a **long recording** (a meeting, a podcast) to transcribe
 
 ## Commands
 
-### Speak text (TTS)
+### Transcribe (ASR)
 
 ```bash
-# Speak with the user's last-used voice (most common)
-vox say "Your text here"
+# Local file — auto-routes: <=10MB sync, larger uploads to async filetrans
+vox hear -f ~/recording.wav
+vox hear -f ~/meeting-2h.mp3
 
-# Speak with a specific system voice
-vox say "Hello world" --voice Cherry
+# Public URL (async filetrans, up to 12h / 2GB)
+vox hear --url https://example.com/podcast.mp3
 
-# Specify language for better pronunciation
-vox say "你好世界" --lang Chinese
-vox say "こんにちは" --lang Japanese
-
-# Expressive speech with style instructions
-vox say "Welcome to our show!" --instruct "warm and enthusiastic, moderate pace"
-
-# Adjust speech rate
-vox say "Slow and clear" --speed 0.8
-
-# Save audio to file
-vox say "Save this" --output ~/Desktop/output.wav
-```
-
-### Transcribe speech (ASR)
-
-```bash
-# Record from microphone (5 seconds default)
+# Microphone (5 seconds default)
 vox hear
-
-# Record longer
 vox hear -d 10
 
-# Transcribe an existing audio file
-vox hear -f ~/recording.wav
+# Force the async filetrans path for a small file
+vox hear -f short.wav --long
 
 # Provide context for better recognition of domain terms
-vox hear -c "Qwen, DashScope, OnType"
-```
-
-### Manage voices
-
-```bash
-# List all available voices (system + cloned)
-vox voice list
-
-# Enroll a new cloned voice from an audio file
-vox voice record --file ~/my-recording.wav --name myvoice
-
-# Record from microphone (language auto-detected from system)
-vox voice record --name myvoice
-
-# Specify language for sample text
-vox voice record --name myvoice --lang ja
-
-# Delete a cloned voice
-vox voice delete <voice-id>
+vox hear -f call.wav -c "Qwen, DashScope, Clonesite"
 ```
 
 ### Auth
 
 ```bash
-# Check if authenticated
-vox auth status
+vox auth status                              # check if authenticated
+vox auth login dashscope --token <api-key>   # login (once)
+```
 
-# Login (only needed once)
-vox auth login dashscope --token <api-key>
+### Cache
+
+```bash
+vox cache         # show cache size / file count
+vox cache clear   # delete cached transcriptions
 ```
 
 ## Behavior
 
-- **Auto voice**: `vox say` without `--voice` uses the last voice. No need to pass `--voice` every time.
-- **Auto language**: `vox voice record` without `--lang` detects language from macOS system locale.
-- **Caching**: Same text + voice combination plays instantly from cache on repeat.
-- **Streaming**: Audio streams to speaker as it generates — no wait for full download.
-- **Pipeable ASR**: `vox hear` outputs text to stdout, can be piped to other commands.
-- **Language auto-detect**: Usually correct, but pass `--lang` for mixed-language or ambiguous text.
-
-## System Voices
-
-| Voice | Gender | Language |
-|-------|--------|----------|
-| Cherry | Female | zh/en |
-| Ethan | Male | zh/en |
-| Chelsie | Female | zh/en |
-| Serena | Female | zh/en |
-| Dylan | Male | zh (Beijing) |
-| Jada | Female | zh (Shanghai) |
-| Sunny | Female | zh (Sichuan) |
+- **Pipeable**: `vox hear` writes the transcript to stdout; metadata (model, latency) goes to stderr. Pipe it: `vox hear -f a.wav | pbcopy`.
+- **Auto-routing**: local files ≤ 10 MB use the fast synchronous `qwen3-asr-flash`; larger files (or `--long`, or `--url`) use the async `qwen3-asr-flash-filetrans`.
+- **No OSS needed**: large local files are uploaded to DashScope's temporary store automatically — the user does not need an Aliyun OSS bucket.
+- **ITN on by default**: spoken numbers render as digits ("forty two" → "42"); pass `--no-itn` to keep words. Hotwords/context are NOT supported by the filetrans model.
+- **Caching**: same input + context returns instantly from `~/.vox/cache/` on repeat. Use `--no-cache` to force a fresh call.
 
 ## Tips
 
-- For long text, just pass it all — the API handles streaming well.
-- If the user has a cloned voice set up, prefer using it (no `--voice` flag needed).
 - Check `vox auth status` first if you get auth errors.
-- Use `--output` when the user wants to keep the audio file.
-- `vox hear` output goes to stdout — stderr has metadata. Pipe-friendly.
-- For voice cloning, 10-20 seconds of clear audio works best.
+- Pass `-c` with names/jargon the model might not know (product names, people) to improve accuracy.
+- For a file already reachable on the public web, prefer `--url` — it skips the upload step.
